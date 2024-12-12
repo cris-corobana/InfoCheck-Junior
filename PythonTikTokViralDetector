@@ -1,0 +1,102 @@
+from googleapiclient.discovery import build
+import datetime
+import time
+
+# -------------------------
+# User-defined parameters
+# -------------------------
+API_KEY = "YOUR_API_KEY"
+SEARCH_QUERY = "kids educational cartoons"  # Example query for children's content
+MAX_RESULTS = 10
+VIEW_GROWTH_THRESHOLD = 1.5  # A factor by which views must grow to be considered "viral"
+LIKE_GROWTH_THRESHOLD = 1.5
+SLEEP_BETWEEN_CHECKS = 3600  # Time in seconds to wait between checks (e.g., 1 hour)
+# -------------------------
+
+youtube = build('youtube', 'v3', developerKey=API_KEY)
+
+def fetch_videos(query, max_results=10):
+    # Fetches a list of video IDs for the given query
+    search_response = youtube.search().list(
+        q=query,
+        part='snippet',
+        type='video',
+        maxResults=max_results
+    ).execute()
+
+    videos = []
+    for item in search_response.get('items', []):
+        video_id = item['id']['videoId']
+        snippet = item['snippet']
+        # You can further filter for children’s content by checking snippet tags, title keywords, etc.
+        # YouTube also provides a madeForKids flag in contentDetails on certain endpoints.
+        videos.append(video_id)
+    return videos
+
+def fetch_video_stats(video_ids):
+    # Fetches statistics for given video IDs
+    response = youtube.videos().list(
+        part='statistics,contentDetails,snippet',
+        id=','.join(video_ids)
+    ).execute()
+
+    stats = {}
+    for item in response.get('items', []):
+        vid_id = item['id']
+        statistics = item.get('statistics', {})
+        snippet = item.get('snippet', {})
+
+        # Check if the video is marked as madeForKids (if available)
+        # For simplicity, assume content is children’s content from the search query.
+        # If you have access to contentDetails.madeForKids, you can filter here.
+
+        views = int(statistics.get('viewCount', 0))
+        likes = int(statistics.get('likeCount', 0)) if 'likeCount' in statistics else 0
+        stats[vid_id] = {
+            'title': snippet.get('title'),
+            'views': views,
+            'likes': likes
+        }
+    return stats
+
+# Initial fetch
+video_ids = fetch_videos(SEARCH_QUERY, MAX_RESULTS)
+initial_stats = fetch_video_stats(video_ids)
+
+# Store initial stats with timestamps
+historical_data = {
+    vid_id: {
+        'title': data['title'],
+        'initial_views': data['views'],
+        'initial_likes': data['likes'],
+        'initial_time': datetime.datetime.utcnow()
+    }
+    for vid_id, data in initial_stats.items()
+}
+
+print("Initial data collected. Waiting for next check to measure growth...")
+
+# Wait for a certain period before re-checking to identify growth
+time.sleep(SLEEP_BETWEEN_CHECKS)
+
+# Re-fetch stats after waiting
+new_stats = fetch_video_stats(video_ids)
+
+# Check for growth and determine if viral
+for vid_id, new_data in new_stats.items():
+    old_data = historical_data[vid_id]
+    old_views = old_data['initial_views']
+    old_likes = old_data['initial_likes']
+    new_views = new_data['views']
+    new_likes = new_data['likes']
+
+    # Compute growth factors
+    view_growth_factor = (new_views / old_views) if old_views > 0 else new_views
+    like_growth_factor = (new_likes / old_likes) if old_likes > 0 else (new_likes + 1)
+
+    # Determine if viral
+    if view_growth_factor >= VIEW_GROWTH_THRESHOLD or like_growth_factor >= LIKE_GROWTH_THRESHOLD:
+        print(f"Video '{new_data['title']}' ({vid_id}) seems to be going viral!")
+        print(f"View growth: {view_growth_factor:.2f}, Like growth: {like_growth_factor:.2f}")
+    else:
+        print(f"Video '{new_data['title']}' ({vid_id}) did not meet viralization criteria.")
